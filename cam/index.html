@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>拍照學客語</title>
+<meta name="copyright" content="鑫宥嘉有限公司 版權所有">
+<meta name="author" content="鑫宥嘉有限公司">
+<meta name="description" content="用手機拍下身邊的物品或客語文字，自動辨識並說出客語（四縣、海陸、大埔、饒平、詔安、南四縣），可收藏到我的最愛定期複習，也能錄音提供客語資料、回報錯誤。">
+<meta name="theme-color" content="#b4492b">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><div class="wrap">
+  <h1>📷 拍照學客語</h1>
+  <a id="btnAdmin" class="btn sm hide" href="admin.html" title="管理者介面">🛠️ 管理</a>
+  <select id="dialect" class="btn sm" aria-label="客語腔調"></select>
+  <button id="btnAuth" class="btn sm">登入</button>
+</div></header>
+
+<main class="wrap">
+  <!-- 拍照 -->
+  <section id="vCam">
+    <div class="modes" role="group" aria-label="辨識模式">
+      <button data-mode="object" aria-pressed="true">📦 認物件<small>拍物品，學國語＋客語</small></button>
+      <button data-mode="text" aria-pressed="false">🔤 認文字<small>拍客語文字，看拼音聽發音</small></button>
+    </div>
+    <div id="camBox">
+      <div class="cam" id="cam">
+        <video id="video" playsinline muted autoplay></video>
+        <div class="aim hide" id="aim"></div>
+        <div class="msg" id="camMsg"></div>
+      </div>
+      <div class="shutter">
+        <label class="btn" title="從相簿選照片">🖼️ 相簿<input id="file" type="file" accept="image/*" class="hide"></label>
+        <button class="shoot" id="btnShoot" aria-label="開啟相機">📷</button>
+        <button class="btn" id="btnFlip" title="切換前後鏡頭">🔄 鏡頭</button>
+      </div>
+      <div class="row" style="justify-content:center"><label class="btn" id="snapBtn">📸 用手機內建相機拍照<input id="snap" type="file" accept="image/*" capture="environment" class="hide"></label></div>
+      <p class="muted" id="modelMsg" style="text-align:center"></p>
+      <div class="card" id="typeCard">
+        <label class="f" for="typeIn" style="margin-top:0">沒有相機？也可以直接輸入客語漢字查詢</label>
+        <div class="row"><input class="f grow" id="typeIn" maxlength="30" placeholder="例如：汽車、食飯、學校" style="width:auto"><button class="btn pri" id="btnType">查詢</button></div>
+      </div>
+    </div>
+
+    <div id="resBox" class="hide">
+      <div class="card res" id="res"></div>
+      <div id="acts">
+        <div class="row" style="justify-content:center;margin:12px 0">
+          <button class="btn pri" id="btnFav">⭐ 加入我的最愛</button>
+          <button class="btn" id="btnAgain">📷 再拍一張</button>
+        </div>
+        <div class="contrib-actions"><button class="btn sm" id="btnContrib">🎙️ 提供客語資料</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 我的最愛 -->
+  <section id="vFav" class="hide">
+    <div class="row" style="margin-top:12px">
+      <h2 class="grow" style="font-size:18px;margin:0">⭐ 我的最愛</h2>
+      <select id="favKind" class="btn sm" aria-label="類型">
+        <option value="all">全部類型</option><option value="object">📦 認物件</option><option value="text">🔤 認文字</option>
+      </select>
+      <select id="favFilter" class="btn sm" aria-label="篩選">
+        <option value="all">全部</option><option value="due">今天要複習</option><option value="doing">複習中</option><option value="done">已完成 5 次</option>
+      </select>
+    </div>
+    <div id="dueBanner"></div>
+    <div id="favList"></div>
+  </section>
+
+  <!-- 複習 -->
+  <section id="vRev" class="hide"><div id="revBody"></div></section>
+
+  <!-- 群組 -->
+  <section id="vGrp" class="hide"><div id="grpBody"></div></section>
+
+  <footer>© 2026 鑫宥嘉有限公司｜客語音讀、錄音與釋義取自教育部《臺灣客語辭典》與《臺灣客家語常用詞辭典》｜<a href="../">客語字音字形練習</a></footer>
+</main>
+
+<nav class="tabs"><div class="wrap">
+  <button data-tab="vCam" aria-current="page"><b>📷</b>拍照</button>
+  <button data-tab="vFav"><b>⭐</b>我的最愛</button>
+  <button data-tab="vRev"><b>🔁</b>複習<span class="badge hide" id="dueBadge"></span></button>
+  <button data-tab="vGrp"><b>👥</b>群組</button>
+</div></nav>
+
+<div class="modal hide" id="modal"><div class="sheet" id="sheet"></div></div>
+<div class="toast" id="toast"></div>
+
+<script src="core.js"></script>
+<script src="../objcam/vocab.js"></script>
+<script src="mode-obj.js"></script>
+<script src="mode-text.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
