@@ -176,6 +176,7 @@ footer a{color:inherit}
         <button class="shoot" id="btnShoot" aria-label="開啟相機">📷</button>
         <button class="btn" id="btnFlip" title="切換前後鏡頭">🔄 鏡頭</button>
       </div>
+      <div class="row" style="justify-content:center"><label class="btn" id="snapBtn">📸 用手機內建相機拍照<input id="snap" type="file" accept="image/*" capture="environment" class="hide"></label></div>
       <p class="muted" id="modelMsg" style="text-align:center">文字辨識程式載入中…（第一次約需 10～20 秒）</p>
       <div class="card">
         <label class="f" for="typeIn" style="margin-top:0">沒有相機？也可以直接輸入客語漢字查詢</label>
@@ -601,7 +602,7 @@ function mergeLines(ls){
 /* ================= 相機 ================= */
 let stream=null,facing="environment";
 async function openCam(){
-  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){$("#camMsg").innerHTML="這個瀏覽器無法直接開相機，<br>請按「相簿」拍照或選照片。";return false}
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){$("#camMsg").innerHTML="這個瀏覽器無法直接開相機，<br>請按下方「📸 用手機內建相機拍照」或「相簿」。";$("#snapBtn").classList.add("pri");return false}
   try{
     if(stream)stream.getTracks().forEach(t=>t.stop());
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1920},height:{ideal:1920}},audio:false});
@@ -611,9 +612,24 @@ async function openCam(){
   }catch(e){
     console.warn(e);
     $("#camMsg").classList.remove("hide");
-    $("#camMsg").innerHTML="無法開啟相機（"+esc(e.name||"錯誤")+"）。<br>請允許瀏覽器使用相機，或按「相簿」拍照。";
+    $("#camMsg").innerHTML=camHelp(e.name);
+    $("#snapBtn").classList.add("pri");
     return false;
   }
+}
+/* 相機打不開時，依原因說明怎麼處理；也可以改用手機內建相機（不需要網頁權限） */
+function camHelp(name){
+  const ua=navigator.userAgent,ios=/iPhone|iPad|iPod/.test(ua);
+  const inApp=/Line\/|FBAN|FBAV|Instagram|Messenger|MicroMessenger/i.test(ua);
+  let how;
+  if(inApp)how="你是從 LINE／Facebook 等 App 裡開啟的，這類內建瀏覽器常會擋相機。<br>請按右上角選單「用瀏覽器開啟」（Safari 或 Chrome）。";
+  else if(name==="NotAllowedError"||name==="SecurityError")how=ios
+    ?"相機權限被拒絕了。請到 iPhone「設定 → Safari → 相機」選「允許」，<br>或點網址列左邊的「ᴀA」→「網站設定」→ 相機 →「允許」，再重新整理。"
+    :"相機權限被拒絕了。請點網址列左邊的 🔒 圖示 →「權限」→ 相機 →「允許」，再重新整理。";
+  else if(name==="NotReadableError"||name==="AbortError")how="相機正被其他 App 使用中，請先關閉其他用到相機的 App 再試一次。";
+  else if(name==="NotFoundError"||name==="OverconstrainedError")how="找不到可以使用的相機。";
+  else how="無法開啟相機（"+esc(name||"錯誤")+"）。";
+  return how+"<br><br>也可以按下方「📸 用手機內建相機拍照」，<br>不需要網頁相機權限。";
 }
 function stopCam(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}$("#aim").classList.add("hide")}
 function toCanvas(src,w,h,M){
@@ -1079,7 +1095,7 @@ $("#btnShoot").onclick=async()=>{
   const c=await fromVideo();if(c)handleCanvas(c);
 };
 $("#btnFlip").onclick=()=>{facing=facing==="environment"?"user":"environment";camWanted=true;openCam()};
-$("#file").onchange=async e=>{
+$("#file").onchange=$("#snap").onchange=async e=>{
   unlockAudio();
   const f=e.target.files[0];e.target.value="";if(!f)return;
   try{handleCanvas(await fromFile(f))}catch(err){toast(err.message)}
