@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>客語尋寶家</title>
+<meta name="copyright" content="鑫宥嘉有限公司 版權所有">
+<meta name="author" content="鑫宥嘉有限公司">
+<meta name="description" content="拍下身邊的東西，用客語唸出來，收進自己的客家生活圖鑑。吉祥物阿桐陪你一起尋寶。">
+<meta name="theme-color" content="#1e2f4a">
+<link rel="stylesheet" href="game.css">
+</head>
+<body>
+<header id="top">
+  <div class="wrap">
+    <button class="back hide" id="btnBack" aria-label="上一步">‹ 上一步</button>
+    <h1 id="title">客語尋寶家</h1>
+    <span class="pts" id="ptsBadge" title="我的積分">⭐ 0</span>
+  </div>
+</header>
+<div class="guide wrap" id="guide">
+  <div class="atong" id="atongMini" aria-hidden="true"></div>
+  <p id="guideText">歡迎來到客語尋寶家！</p>
+  <button class="relisten" id="btnRelisten" aria-label="再聽一次說明" title="再聽一次">🔊</button>
+</div>
+<main class="wrap" id="main"></main>
+<p class="proto wrap">原型版本：資料只存在這支手機，客語自動比對尚在實測中。© 2026 鑫宥嘉有限公司｜客語音讀與錄音取自教育部《臺灣客語辭典》｜<a href="../cam/">拍照學客語</a></p>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="fileCam" accept="image/*" capture="environment" class="hide">
+<input type="file" id="fileAlbum" accept="image/*" class="hide">
+<script src="../objcam/vocab.js"></script>
+<script src="concepts.js"></script>
+<script src="score.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
