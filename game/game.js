@@ -8,7 +8,7 @@ const CONCEPTS=window.GAME_CONCEPTS,ALBUMS=window.GAME_ALBUMS,S=window.HQScore;
 const AUDIO_BASE="https://hakkadict.moe.edu.tw/static/audio/";
 const MOBILENET_URL="https://storage.googleapis.com/tfjs-models/savedmodel/mobilenet_v2_1.0_224/model.json";
 const LIBS=["https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js","https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"];
-const CONSENT_VERSION="proto-2026-11";
+const CONSENT_VERSION="2026-11-v1";   /* 同意書版本；文字改了就要換版本 */
 const MAX_REC_MS=6000;
 const DIAL={
   1:{n:"四縣腔",s:"四",t:{"24":"ˊ","11":"ˇ","31":"ˋ","55":"","2":"ˋ","5":""}},
@@ -57,10 +57,17 @@ function atongSVG(mood){
 /* ================= 狀態（本機） ================= */
 const DEF={v:1,player:{name:"",dialect:1,fs:1,voice:true,consent:null},points:0,ledger:[],collection:{},
   streak:{last:null,days:0,restWeek:null,restUsed:0},quests:null,asrUrl:"",
-  data:{captures:[],regions:[],labels:[],recordings:[]}};
+  data:{captures:[],regions:[],labels:[],recordings:[]},
+  speaker:null,      /* 匿名說話者資料（對應 game_speakers），全部可不填 */
+  consents:[]};      /* 每次同意或撤回都留一筆（對應 game_consents） */
 let ST=Object.assign({},DEF,lsGet("hq_state",{}));
 ST.player=Object.assign({},DEF.player,ST.player||{});
 ST.data=Object.assign({},DEF.data,ST.data||{});
+if(!Array.isArray(ST.consents))ST.consents=[];
+/* 舊版同意（proto）只問過「改進客語辨識」：保守地只當作同意研究，不含訓練公司自有模型 */
+if(ST.player.consent&&!ST.player.consent.id){const o=ST.player.consent;
+  ST.player.consent={id:uuid(),version:o.version||"proto-2026-11",game:true,research:!!o.train,train:false,public:!!o.public,minor:false,guardian_at:null,at:o.at||new Date().toISOString(),revoked_at:null};
+  ST.consents.push(ST.player.consent)}
 const save=()=>lsSet("hq_state",ST);
 
 /* IndexedDB：照片裁切圖與錄音 */
@@ -410,7 +417,7 @@ SCREENS.lang=()=>{
       <button class="opt" data-l="zh"><span><b>國語</b></span></button>
       <button class="opt" data-l="en"><span><b>英語</b></span></button>
     </div>`;
-  main().querySelectorAll("[data-l]").forEach(b=>b.onclick=()=>{RUN.lang=b.dataset.l;RUN.dialect=b.dataset.d?+b.dataset.d:null;RUN.attempt=0;show("rec")});
+  main().querySelectorAll("[data-l]").forEach(b=>b.onclick=()=>{RUN.lang=b.dataset.l;RUN.dialect=b.dataset.d?+b.dataset.d:null;RUN.attempt=0;RUN.demoPlayed=false;show("rec")});
   guide(`你想用哪種話唸「${name}」？平常講${DIAL[d].n}的話，點最上面的大按鈕。`);
 };
 /* 目前要唸的目標詞 */
@@ -422,6 +429,18 @@ function target(){
   }
   if(RUN.lang==="zh")return {lang:"zh",show:v?v.zh:RUN.freeText,pron:v?v.zy:"",accept:c?c.zh:[v?v.zh:RUN.freeText],known:true};
   return {lang:"en",show:c?c.en[0]:"",pron:"",accept:c?c.en:[],known:!!c};
+}
+
+/* 封閉比對的干擾詞：同一本圖鑑、同一腔調的其他物品，最多 9 個（字數相同的優先） */
+function distractors(tg){
+  if(!tg.accept.length)return [];
+  const i=RUN.concept,al=i>=0?albumOf(i):null,w=tg.accept[0];
+  const words=[];
+  VOCAB.forEach((v,k)=>{if(k===i)return;const h=v.h[RUN.dialect];if(!h||!h.w||h.w===w||words.includes(h.w))return;
+    if(!al||al.cats.includes(v.cat))words.push(h.w)});
+  const same=words.filter(x=>[...x].length===[...w].length),rest=words.filter(x=>[...x].length!==[...w].length);
+  const shuf=a=>a.map(x=>[Math.random(),x]).sort((p,q)=>p[0]-q[0]).map(x=>x[1]);
+  return [...shuf(same),...shuf(rest)].slice(0,9);
 }
 
 /* ================= 畫面：錄音 ================= */
@@ -441,7 +460,7 @@ SCREENS.rec=()=>{
       <button class="big accent" id="btnSend">✅ 送出比對</button>
     </div>`;
   const demo=$("#btnDemo");
-  if(demo)demo.onclick=()=>tg.lang==="hak"?playHakka(tg.h):speak(tg.show,tg.lang);
+  if(demo)demo.onclick=()=>{RUN.demoPlayed=true;tg.lang==="hak"?playHakka(tg.h):speak(tg.show,tg.lang)};
   $("#btnMic").onclick=()=>REC.active?stopRec():startRec();
   $("#btnPlay").onclick=()=>{if(RUN.lastRec)playUrl(URL.createObjectURL(RUN.lastRec.blob))};
   $("#btnRedo").onclick=()=>{$("#after").classList.add("hide");startRec()};
@@ -451,14 +470,16 @@ SCREENS.rec=()=>{
 async function startRec(){
   stopAudio();
   let stream;
-  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}})}
+  /* 訓練資料要原始聲音：關掉瀏覽器的降噪、回音消除、自動音量，並記下實際生效的設定 */
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1}})}
   catch(e){toast("需要允許使用麥克風才能錄音");return}
   const mime=["audio/webm;codecs=opus","audio/mp4","audio/ogg;codecs=opus"].find(m=>window.MediaRecorder&&MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(m))||"";
   const mr=new MediaRecorder(stream,mime?{mimeType:mime}:undefined),chunks=[];
   const ac=new (window.AudioContext||window.webkitAudioContext)(),an=ac.createAnalyser();an.fftSize=1024;
   ac.createMediaStreamSource(stream).connect(an);
   const buf=new Float32Array(an.fftSize);
-  Object.assign(REC,{active:true,stream,mr,ac,chunks,t0:performance.now(),peak:0,sumRms:0,frames:0,loud:0,transcripts:[]});
+  let cs={};try{const st=stream.getAudioTracks()[0].getSettings();cs={echoCancellation:st.echoCancellation,noiseSuppression:st.noiseSuppression,autoGainControl:st.autoGainControl,channelCount:st.channelCount,sampleRate:st.sampleRate}}catch(e){}
+  Object.assign(REC,{active:true,stream,mr,ac,chunks,t0:performance.now(),peak:0,sumRms:0,frames:0,loud:0,transcripts:[],settings:cs,listened:!!RUN.demoPlayed});
   /* 國語、英語：同時用瀏覽器語音辨識（支援的瀏覽器才有） */
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(SR&&RUN.lang!=="hak"){
@@ -493,7 +514,7 @@ async function finishRec(){
   const blob=new Blob(REC.chunks,{type:(REC.mr.mimeType||"audio/webm").split(";")[0]});
   if(REC.srDone)await Promise.race([REC.srDone,new Promise(r=>setTimeout(r,2500))]);
   RUN.attempt++;
-  RUN.lastRec={blob,mime:blob.type,sample_rate:sr,duration:+REC.dur.toFixed(2),peak:+REC.peak.toFixed(3),mean_rms:+(REC.sumRms/Math.max(1,REC.frames)).toFixed(4),voiced_ratio:+(REC.loud/Math.max(1,REC.frames)).toFixed(2),transcripts:REC.transcripts.slice()};
+  RUN.lastRec={blob,mime:blob.type,sample_rate:sr,duration:+REC.dur.toFixed(2),peak:+REC.peak.toFixed(3),mean_rms:+(REC.sumRms/Math.max(1,REC.frames)).toFixed(4),voiced_ratio:+(REC.loud/Math.max(1,REC.frames)).toFixed(2),transcripts:REC.transcripts.slice(),capture_settings:REC.settings,listened_demo:REC.listened};
   const m=$("#btnMic");if(m){m.classList.remove("rec");m.innerHTML="<b>🎙️</b><span>再錄一次</span>"}
   const msg=$("#recMsg");
   if(RUN.lastRec.peak<0.05||RUN.lastRec.voiced_ratio<0.08){if(msg)msg.textContent="聲音有點小，靠近一點講，再錄一次會比較好。";guide("聲音有點小，靠近手機一點，再錄一次。","think")}
@@ -509,7 +530,9 @@ async function check(){
   const rec={id:uuid(),label_id:RUN.label.id,concept:RUN.label.concept,free_text:RUN.freeText,lang:tg.lang,dialect:tg.lang==="hak"?RUN.dialect:null,
     expect:tg.accept[0]||null,expect_pinyin:tg.pinyin||null,mime:r.mime,sample_rate:r.sample_rate,duration:r.duration,peak:r.peak,mean_rms:r.mean_rms,voiced_ratio:r.voiced_ratio,
     attempt:RUN.attempt,device:navigator.userAgent.slice(0,160),asr_model:null,transcript:null,heard_pinyin:null,score:null,auto_verdict:null,final_verdict:null,self_check:null,
-    sha256:await sha256(r.blob),consent:ST.player.consent?ST.player.consent.train:false,t:new Date().toISOString()};
+    sha256:await sha256(r.blob),consent_id:ST.player.consent?ST.player.consent.id:null,consent_version:ST.player.consent?ST.player.consent.version:null,
+    speaker_id:ST.speaker?ST.speaker.id:null,listened_demo:r.listened_demo,capture_settings:r.capture_settings||null,
+    asr_mode:null,asr_best:null,asr_candidates:null,player_text:null,player_pinyin:null,withdrawn_at:null,upload_state:"local",t:new Date().toISOString()};
   main().innerHTML=`<div class="result pending"><div class="big-icon">🎧</div><p>阿桐認真聽…</p></div>`;
   guide("阿桐認真聽，等一下下。","think");
   /* 1) 有設定語音比對伺服器：送去比對（客語、國語、英語都可） */
@@ -519,10 +542,14 @@ async function check(){
       fd.append("audio",r.blob,"rec."+(r.mime.split("/")[1]||"webm"));
       fd.append("lang",tg.lang);fd.append("dialect",String(rec.dialect||""));
       fd.append("accept",JSON.stringify(tg.accept));fd.append("pinyin",tg.pinyin||"");
+      /* 客語：封閉比對，給同一本圖鑑的其他物品當干擾詞 */
+      const ds=tg.lang==="hak"?distractors(tg):[];
+      if(ds.length){fd.append("candidates",JSON.stringify(ds));fd.append("mode","closed")}
       const res=await fetch(ST.asrUrl.replace(/\/$/,"")+"/check",{method:"POST",body:fd});
       if(!res.ok)throw new Error("HTTP "+res.status);
       const j=await res.json();
-      Object.assign(rec,{asr_model:j.model||"server",transcript:j.transcript||"",heard_pinyin:j.pinyin||null,score:j.score,auto_verdict:j.verdict});
+      Object.assign(rec,{asr_model:j.model||"server",asr_mode:j.mode||"open",transcript:j.transcript||"",heard_pinyin:j.pinyin||null,score:j.score,auto_verdict:j.verdict,
+        asr_best:j.best||null,asr_candidates:j.candidates||null});
     }catch(e){toast("語音比對伺服器連不上，改用自己聽聽看");}
   }
   /* 2) 國語、英語：瀏覽器語音辨識的結果 */
@@ -548,19 +575,34 @@ SCREENS.selfcheck=()=>{
       <p>${tg.lang==="hak"?"客語自動比對還在實測中。":"這支手機不支援自動比對。"}先請你自己比比看：</p></div>
     <div class="row">${(tg.lang==="hak"&&tg.h)||tg.lang!=="hak"&&tg.show?`<button class="big alt" id="btnDemo2">🔊 示範</button>`:""}<button class="big alt" id="btnMine">▶️ 我的</button></div>
     <button class="big accent" id="btnLike">👍 差不多，送出</button>
+    <button class="big alt" id="btnOther">💬 我唸的是另一種說法</button>
+    <div id="otherBox" class="card hide">
+      <h2>你唸的是什麼？</h2>
+      <input class="f" id="oText" maxlength="30" placeholder="客語漢字，例如：鐵馬">
+      <input class="f" id="oPinyin" maxlength="80" placeholder="拼音（會的話再填），例如：tiet2 ma24">
+      <button class="big accent" id="btnOtherSend">送出</button>
+    </div>
     <button class="big alt" id="btnAgain">🔁 再唸一次</button>`;
   const d=$("#btnDemo2");if(d)d.onclick=()=>tg.lang==="hak"?playHakka(tg.h):speak(tg.show,tg.lang);
   $("#btnMine").onclick=()=>playUrl(URL.createObjectURL(RUN.lastRec.blob));
   $("#btnLike").onclick=()=>{const rec=RUN.curRec;rec.self_check="similar";rec.final_verdict="pending_review";ST.data.recordings.push(rec);save();reward("pending")};
+  $("#btnOther").onclick=()=>{$("#otherBox").classList.remove("hide");$("#oText").focus()};
+  $("#btnOtherSend").onclick=()=>{
+    const t=$("#oText").value.trim();if(!t){toast("請寫下你唸的詞");return}
+    const rec=RUN.curRec;rec.self_check="different";rec.player_text=t;rec.player_pinyin=$("#oPinyin").value.trim()||null;
+    rec.final_verdict="pending_review";ST.data.recordings.push(rec);save();reward("pending");
+  };
   $("#btnAgain").onclick=()=>show("rec",{replace:true});
   guide("先聽示範，再聽你自己的。覺得差不多就按「差不多，送出」，阿桐會請大家幫忙確認。");
 };
 SCREENS.unsure=()=>{
   const rec=RUN.curRec;
+  /* 封閉比對沒有逐字結果：模型最傾向的詞若就是正確詞，表示「有點像但不確定」 */
+  const heard=rec.transcript||(rec.asr_best&&rec.asr_best!==rec.expect?rec.asr_best:"");
   setTitle("再試一次");
   main().innerHTML=`
     <div class="result unsure"><div class="big-icon">🤔</div>
-      <p>阿桐聽到的是：<b>「${esc(rec.transcript||"（沒有聽清楚）")}」</b></p>
+      <p>阿桐聽到的是：<b>「${esc(heard||"（沒有聽清楚）")}」</b></p>
       <p class="muted" style="color:inherit">唸錯不會扣分，再試一次就好。</p></div>
     <button class="big accent" id="btnRetry">🔁 再唸一次</button>
     <button class="big alt" id="btnRename">✏️ 名稱選錯了，改名稱</button>
@@ -568,7 +610,7 @@ SCREENS.unsure=()=>{
   $("#btnRetry").onclick=()=>show("rec",{replace:true});
   $("#btnRename").onclick=()=>{RUN.attempt=0;show("name",{replace:true});openOther()};
   $("#btnSelf").onclick=()=>{rec.self_check="disputed";rec.final_verdict="pending_review";save();reward("pending")};
-  guide(`阿桐聽到的是「${rec.transcript||"聽不清楚"}」，好像不太一樣。可以再唸一次，或改名稱。`,"think");
+  guide(`阿桐聽到的是「${heard||"聽不清楚"}」，好像不太一樣。可以再唸一次，或改名稱。`,"think");
 };
 
 /* ================= 得分、收進圖鑑 ================= */
@@ -676,10 +718,10 @@ SCREENS.settings=()=>{
     <h2>平常講的腔調</h2><select class="f" id="sDial">${[1,2,3,4,5,6].map(d=>`<option value="${d}" ${d===p.dialect?"selected":""}>${DIAL[d].n}</option>`).join("")}</select>
     <h2>字的大小</h2><div class="seg">${[[1,"標準"],[2,"大"],[3,"特大"]].map(x=>`<button data-fs="${x[0]}" aria-pressed="${p.fs===x[0]}">${x[1]}</button>`).join("")}</div>
     <h2>阿桐講話</h2><div class="seg"><button data-v="1" aria-pressed="${p.voice}">開</button><button data-v="0" aria-pressed="${!p.voice}">關</button></div>
+    <h2>我的基本資料</h2>
+    <button class="big alt" id="btnProfile">👤 ${ST.speaker?"修改":"填寫"}基本資料（可不填）</button>
     <h2>資料使用同意</h2>
-    <label class="ck"><input type="checkbox" id="cTrain" ${c.train?"checked":""}><span>我同意照片與錄音用來改進客語辨識（訓練資料）</span></label>
-    <label class="ck"><input type="checkbox" id="cPublic" ${c.public?"checked":""}><span>我同意別人可以聽我的錄音</span></label>
-    <p class="muted">隨時可以取消。取消後，你的資料不會放進下一版的訓練資料。</p>
+    ${consentHTML(c)}
     <button class="big" id="btnSave">儲存</button>
     <details class="card"><summary>進階（給工作人員）</summary>
       <h2>語音比對伺服器網址</h2><input class="f" id="sAsr" value="${esc(ST.asrUrl)}" placeholder="https://…（沒有就留空）">
@@ -690,20 +732,86 @@ SCREENS.settings=()=>{
   main().querySelectorAll("[data-v]").forEach(b=>b.onclick=()=>{p.voice=b.dataset.v==="1";save();show("settings",{replace:true})});
   $("#btnSave").onclick=()=>{
     p.name=$("#sName").value.trim();p.dialect=+$("#sDial").value;
-    p.consent={version:CONSENT_VERSION,train:$("#cTrain").checked,public:$("#cPublic").checked,at:new Date().toISOString()};
+    saveConsent();
     ST.asrUrl=$("#sAsr").value.trim();save();toast("已儲存");show("home");
   };
+  bindConsent();
+  $("#btnProfile").onclick=()=>show("profile");
   $("#btnExport").onclick=exportData;
   $("#btnReset").onclick=async()=>{if(!confirm("確定要清除這支手機上的全部遊戲資料嗎？"))return;localStorage.removeItem("hq_state");await IDB.clear();location.reload()};
   guide("這裡可以改名字、腔調、字的大小，也可以設定資料要不要拿來改進客語辨識。");
 };
 function exportData(){
   const out={exported_at:new Date().toISOString(),consent:ST.player.consent,player:{dialect:ST.player.dialect},
+    game_consents:ST.consents,game_speakers:ST.speaker?[ST.speaker]:[],
     game_captures:ST.data.captures,game_regions:ST.data.regions,game_labels:ST.data.labels,game_recordings:ST.data.recordings,
     game_points_ledger:ST.ledger,note:"照片與錄音檔存在本機 IndexedDB（photo:/crop:/audio: 前綴），此 JSON 只含中繼資料。"};
   const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(out,null,2)],{type:"application/json"}));
   a.download="hakka-quest-"+today()+".json";a.click();
 }
+
+/* ================= 同意書（歡迎畫面與設定共用） ================= */
+function consentHTML(c){
+  c=c||{};
+  return `<div class="card consent">
+    <label class="ck"><input type="checkbox" id="cResearch" ${c.research?"checked":""}><span>我同意照片與錄音用於<b>改進客語辨識的研究與測試</b></span></label>
+    <label class="ck"><input type="checkbox" id="cTrain" ${c.train?"checked":""}><span>我同意照片與錄音用來<b>訓練鑫宥嘉有限公司自有的客語辨識模型</b>，包含日後的正式服務</span></label>
+    <label class="ck"><input type="checkbox" id="cPublic" ${c.public?"checked":""}><span>我同意<b>其他玩家可以聽我的錄音</b>，幫忙確認唸得對不對</span></label>
+    <label class="ck"><input type="checkbox" id="cMinor" ${c.minor?"checked":""}><span>我未滿 18 歲</span></label>
+    <label class="ck ${c.minor?"":"hide"}" id="rowGuard"><input type="checkbox" id="cGuard" ${c.guardian_at?"checked":""}><span>我的爸媽或監護人看過並同意上面勾選的項目</span></label>
+    <p class="muted">都不勾一樣可以玩。照片會去掉拍攝地點，錄音不會跟你的名字一起提供。隨時可以在「設定」取消，取消後資料不再使用。</p>
+  </div>`;
+}
+function bindConsent(){
+  const sync=()=>{const minor=$("#cMinor").checked,g=$("#cGuard").checked;
+    $("#rowGuard").classList.toggle("hide",!minor);
+    ["cResearch","cTrain","cPublic"].forEach(id=>{const el=$("#"+id);el.disabled=minor&&!g;if(el.disabled)el.checked=false})};
+  ["cMinor","cGuard"].forEach(id=>$("#"+id).onchange=sync);sync();
+}
+/* 讀取畫面上的勾選；有變動才新增一筆同意紀錄，並把舊的標成撤回 */
+function saveConsent(){
+  const minor=$("#cMinor").checked,g=minor&&$("#cGuard").checked,ok=!minor||g;
+  const n={version:CONSENT_VERSION,game:true,research:ok&&$("#cResearch").checked,train:ok&&$("#cTrain").checked,public:ok&&$("#cPublic").checked,minor,guardian_at:g?new Date().toISOString():null};
+  const o=ST.player.consent;
+  const same=o&&!o.revoked_at&&["version","research","train","public","minor"].every(k=>o[k]===n[k]);
+  if(same)return o;
+  const now=new Date().toISOString();
+  if(o&&!o.revoked_at){
+    /* 重新載入後 player.consent 與 consents 裡的是兩個物件，兩邊都要標記 */
+    o.revoked_at=now;const inList=ST.consents.find(x=>x.id===o.id);if(inList)inList.revoked_at=now;else ST.consents.push(o);
+    /* 撤回或縮小同意範圍：用舊同意收集的錄音不再使用（對應 game_recordings.withdrawn_at） */
+    const narrowed=["research","train","public"].some(k=>o[k]&&!n[k]);
+    if(narrowed)ST.data.recordings.forEach(r=>{if(r.consent_id===o.id&&!r.withdrawn_at)r.withdrawn_at=now});
+  }
+  ST.player.consent=Object.assign({id:uuid(),at:now,revoked_at:null},n);
+  ST.consents.push(ST.player.consent);
+  return ST.player.consent;
+}
+
+/* ================= 畫面：我的基本資料（匿名，可不填） ================= */
+const AGE_BANDS=["<13","13-17","18-29","30-44","45-64","65-74","75+"];
+const AGE_NAME={"<13":"12 歲以下","13-17":"13–17 歲","18-29":"18–29 歲","30-44":"30–44 歲","45-64":"45–64 歲","65-74":"65–74 歲","75+":"75 歲以上"};
+const LEVEL_NAME={native:"從小就講",fluent:"講得很流利",learner:"正在學",beginner:"剛開始學"};
+SCREENS.profile=()=>{
+  setTitle("我的基本資料");
+  const sp=ST.speaker||{};
+  const opt=(list,names,cur)=>`<option value="">不填</option>`+list.map(v=>`<option value="${v}" ${v===cur?"selected":""}>${esc(names[v]||v)}</option>`).join("");
+  main().innerHTML=`
+    <p>這些資料幫忙讓客語辨識聽得懂不同年紀、不同地方的人。<b>每一項都可以不填</b>，也不會公開你的名字。</p>
+    <h2>年紀</h2><select class="f" id="pAge">${opt(AGE_BANDS,AGE_NAME,sp.age_band)}</select>
+    <h2>性別</h2><select class="f" id="pGender">${opt(["f","m","x"],{f:"女",m:"男",x:"不想說"},sp.gender)}</select>
+    <h2>在哪裡長大</h2><input class="f" id="pRegion" maxlength="40" value="${esc(sp.region||"")}" placeholder="例如：苗栗縣公館鄉">
+    <h2>從小講的腔調</h2><select class="f" id="pNative">${opt(["1","2","3","4","5","6"],{1:"四縣腔",2:"海陸腔",3:"大埔腔",4:"饒平腔",5:"詔安腔",6:"南四縣腔"},sp.native_dialect?String(sp.native_dialect):"")}</select>
+    <h2>客語程度</h2><select class="f" id="pLevel">${opt(Object.keys(LEVEL_NAME),LEVEL_NAME,sp.hakka_level)}</select>
+    <button class="big accent" id="btnSaveP">儲存</button>`;
+  $("#btnSaveP").onclick=()=>{
+    const v=id=>$("#"+id).value||null;
+    ST.speaker=Object.assign({id:(ST.speaker&&ST.speaker.id)||uuid()},{age_band:v("pAge"),gender:v("pGender"),region:($("#pRegion").value.trim()||null),
+      native_dialect:v("pNative")?+v("pNative"):null,hakka_level:v("pLevel"),updated_at:new Date().toISOString()});
+    save();toast("已儲存，謝謝你！");show("settings",{replace:true});
+  };
+  guide("這些都可以不填。填了可以幫忙讓阿桐聽得懂不同年紀、不同地方的客家話。");
+};
 
 /* ================= 第一次使用：同意書 ================= */
 SCREENS.welcome=()=>{
@@ -712,17 +820,14 @@ SCREENS.welcome=()=>{
     <div class="hero" style="justify-content:center"><div class="atong" style="width:140px;height:140px">${atongSVG("happy")}</div></div>
     <p style="font-size:1.2em;font-weight:700" class="center">我是油桐花精靈「阿桐」！</p>
     <p>拍下身邊的東西，用客語唸出來，就能收進你的客家生活圖鑑、得到積分。</p>
-    <div class="card">
-      <label class="ck"><input type="checkbox" id="wTrain"><span>我同意照片與錄音用來改進客語辨識（可以不勾，一樣可以玩）</span></label>
-      <label class="ck"><input type="checkbox" id="wPublic"><span>我同意別人可以聽我的錄音</span></label>
-      <p class="muted">照片會去掉拍攝地點。隨時可以在「設定」取消。</p>
-    </div>
+    ${consentHTML()}
     <h2>平常講的腔調</h2><select class="f" id="wDial">${[1,2,3,4,5,6].map(d=>`<option value="${d}">${DIAL[d].n}</option>`).join("")}</select>
     <button class="big accent" id="btnStart">開始玩</button>`;
+  bindConsent();
   $("#btnStart").onclick=()=>{
+    if($("#cMinor").checked&&!$("#cGuard").checked&&!confirm("未滿 18 歲要請爸媽或監護人同意，才能提供照片和錄音。先不提供，直接開始玩嗎？"))return;
     ST.player.dialect=+$("#wDial").value;
-    ST.player.consent={version:CONSENT_VERSION,train:$("#wTrain").checked,public:$("#wPublic").checked,at:new Date().toISOString()};
-    save();show("home");
+    saveConsent();save();show("home");
   };
   guide("我是阿桐！先勾選要不要讓錄音幫忙改進客語辨識，不勾也可以玩。再選你平常講的腔調，按「開始玩」。","happy");
 };

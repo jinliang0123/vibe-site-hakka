@@ -692,13 +692,6 @@
      "source": "moe_dict"
     },
     {
-     "hanzi": "下女",
-     "pinyin": "ha55 ng31",
-     "audio": "https://hakkadict.moe.edu.tw/static/audio/2343-1-1-1-l.mp3",
-     "zh": null,
-     "source": "moe_dict"
-    },
-    {
      "hanzi": "偏偏",
      "pinyin": "pien24 pien24",
      "audio": "https://hakkadict.moe.edu.tw/static/audio/hk0000010256-1-1.mp3",
@@ -1402,6 +1395,13 @@
      "hanzi": "破析",
      "pinyin": "po55 sag2",
      "audio": "https://hakkadict.moe.edu.tw/static/audio/hk0000010345-1-1.mp3",
+     "zh": null,
+     "source": "moe_dict"
+    },
+    {
+     "hanzi": "緯度",
+     "pinyin": "vi24 tu55",
+     "audio": "https://hakkadict.moe.edu.tw/static/audio/hk0000013472-1-1.mp3",
      "zh": null,
      "source": "moe_dict"
     }

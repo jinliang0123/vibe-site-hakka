@@ -8,6 +8,8 @@ ROOT = os.path.join(HERE, '..', '..')
 AUDIO_BASE = 'https://hakkadict.moe.edu.tw/static/audio/'
 DIAL = {1: '四縣', 2: '海陸', 3: '大埔', 4: '饒平', 5: '詔安', 6: '南四縣'}
 PER = 200
+# 辭典錄音已失效（404）的詞，抽樣時跳過；2026-11-04 對照組實測發現
+BROKEN_AUDIO = {'2343-1-1-1-l.mp3'}
 
 def load_vocab():
     s = open(os.path.join(ROOT, 'objcam', 'vocab.js'), encoding='utf-8').read()
@@ -46,6 +48,7 @@ def main():
                     pool.append({'hanzi': w, 'pinyin': e[0][d - 1], 'audio': url, 'zh': None, 'source': 'moe_dict'})
                     break
         random.Random(1000 + d).shuffle(pool)
+        pool = [x for x in pool if x['audio'].rsplit('/', 1)[-1] not in BROKEN_AUDIO]  # 洗牌後才剔除，其他詞不變
         items += pool[:max(0, PER - len(items))]
         out['dialects'][str(d)] = {'name': name + '腔', 'items': items[:PER]}
         print(name, len(items[:PER]), '（遊戲詞', sum(1 for x in items[:PER] if x['source'] == 'game_vocab'), '）')
